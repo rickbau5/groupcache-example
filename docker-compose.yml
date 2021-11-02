@@ -1,0 +1,40 @@
+version: "2.1"
+
+services:
+  server-01:
+    build: .
+    image: groupcache-example:local
+    ports:
+      - "3001:3000"
+    environment:
+      GROUPCACHE_ADDR_SELF: "http://server-01:3000"
+      GROUPCACHE_ADDR_PEERS: "http://server-02:3000,http://server-03:3000"
+
+  server-02:
+    build: .
+    image: groupcache-example:local
+    ports:
+      - "3002:3000"
+    environment:
+      GROUPCACHE_ADDR_SELF: "http://server-02:3000"
+      GROUPCACHE_ADDR_PEERS: "http://server-01:3000,http://server-03:3000"
+
+  server-03:
+    build: .
+    image: groupcache-example:local
+    ports:
+      - "3003:3000"
+    environment:
+      GROUPCACHE_ADDR_SELF: "http://server-03:3000"
+      GROUPCACHE_ADDR_PEERS: "http://server-01:3000,http://server-02:3000"
+
+  nginx:
+    image: nginx:1.19.2
+    volumes:
+      - ./docker/nginx/proxy.conf:/etc/nginx/conf.d/00-proxy.conf:ro
+    ports:
+      - "8080:8080"
+    links:
+      - server-01
+      - server-02
+      - server-03
