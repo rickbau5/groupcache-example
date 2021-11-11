@@ -19,16 +19,29 @@ import (
 	"github.com/mailgun/groupcache"
 	"github.com/sirupsen/logrus"
 	"golang.org/x/sync/errgroup"
+)
 
-	_ "net/http/pprof"
+var (
+	logLevel        = os.Getenv("LOG_LEVEL")
+	logRequests, _  = strconv.ParseBool(os.Getenv("LOG_REQUESTS"))
+	pprofEnabled, _ = strconv.ParseBool(os.Getenv("PPROF_ENABLED"))
 )
 
 func main() {
 	var (
-		app    = fiber.New()
-		logger = configureLogger()
-		ttl    = time.Duration(1 * time.Minute)
+		app = fiber.New()
+		ttl = time.Duration(1 * time.Minute)
 	)
+
+	logger, err := configureLogger(logLevel)
+	if err != nil {
+		panic(err)
+	}
+
+	if logRequests {
+		logger.Info("request logger enabled")
+		app.Use(mlogger.New())
+	}
 
 	peers, self, err := configurePeerMaintainer(logger)
 	if err != nil {
@@ -63,7 +76,7 @@ func main() {
 	//  - this is only called by this instance when it is determined to own the key requested
 	group := groupcache.NewGroup("data", 3000000, groupcache.GetterFunc(
 		func(_ groupcache.Context, key string, dest groupcache.Sink) error {
-			logger.WithField("key", key).Debug("fetching key from backend")
+			logger.WithField("key", key).Info("fetching key from backend")
 
 			ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
 			defer cancel()
@@ -102,7 +115,6 @@ func main() {
 	cachingBackend := backendCacheImpl{cache: group}
 
 	// set up the route other services will call
-	app.Use("/data/:guid", mlogger.New())
 	app.Get("/data/:guid", func(ctx *fiber.Ctx) error {
 		guid := ctx.Params("guid")
 		if guid == "" {
@@ -119,12 +131,10 @@ func main() {
 	})
 
 	// set up the groupcache routes (these are internal to groupcache and how it communicates with peers
-	groupCachePath := fmt.Sprintf("%s+", httpPoolOptions.BasePath)
-	app.Use(groupCachePath, mlogger.New())
 	app.Get(fmt.Sprintf("%s+", httpPoolOptions.BasePath), adaptor.HTTPHandler(pool))
 
 	// add pprof endpoints if enabled
-	if b, _ := strconv.ParseBool(os.Getenv("PPROF_ENABLED")); b {
+	if pprofEnabled {
 		pprofGroup := app.Group("/debug/pprof")
 		pprofGroup.Get("/cmdline", adaptor.HTTPHandlerFunc(pprof.Cmdline))
 		pprofGroup.Get("/profile", adaptor.HTTPHandlerFunc(pprof.Profile))
@@ -223,6 +233,8 @@ func configurePeerMaintainer(logger *logrus.Logger) (Peers, string, error) {
 		peers = NewKubernetesPeers(namespace, selector, self, podPort, logger)
 	case "set":
 		peers = PeerSet(strings.Split(os.Getenv("PEERS_SET"), ",")...)
+	case "":
+		return nil, "", errors.New("PEERS_TYPE required")
 	default:
 		return nil, "", fmt.Errorf("unsupported PEERS_TYPE: %s", peersType)
 	}
@@ -230,10 +242,15 @@ func configurePeerMaintainer(logger *logrus.Logger) (Peers, string, error) {
 	return peers, self, nil
 }
 
-func configureLogger() *logrus.Logger {
+func configureLogger(level string) (*logrus.Logger, error) {
+	lvl, err := logrus.ParseLevel(level)
+	if err != nil {
+		return nil, err
+	}
+
 	logger := logrus.New()
-	logger.SetLevel(logrus.DebugLevel)
+	logger.SetLevel(lvl)
 	logger.SetFormatter(&logrus.JSONFormatter{})
 
-	return logger
+	return logger, nil
 }
