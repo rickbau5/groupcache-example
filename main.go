@@ -62,6 +62,7 @@ func main() {
 	// TODO: this needs to go into the errgroup
 	go func() {
 		err := peers.Maintain(ctx, func(peers ...string) {
+			logger.WithFields(logrus.Fields{"self": self, "peers": peers}).Info("setting peers")
 			pool.Set(peers...)
 		})
 		if err != nil {

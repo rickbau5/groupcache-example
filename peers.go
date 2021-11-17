@@ -102,7 +102,7 @@ func (kp *KubernetesPeers) set(infos []gubernator.PeerInfo) {
 		var addr string
 		if info.HTTPAddress != "" {
 			addr = info.HTTPAddress
-		} else {
+		} else if info.GRPCAddress != "" {
 			addr = info.GRPCAddress
 
 			if !strings.HasPrefix(addr, "http") {

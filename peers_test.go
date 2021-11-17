@@ -30,6 +30,14 @@ func TestKubernetesPeers_set(t *testing.T) {
 			},
 			expected: []string{"http://10.0.0.1:3000", "http://10.0.0.2:3000"},
 		},
+		{
+			name: "an invalid peer",
+			infos: []gubernator.PeerInfo{
+				{DataCenter: "", HTTPAddress: "", GRPCAddress: "", IsOwner: false},
+				{DataCenter: "", HTTPAddress: "http://10.0.0.2:3000", GRPCAddress: "", IsOwner: true},
+			},
+			expected: []string{"http://10.0.0.2:3000"},
+		},
 	}
 
 	for _, tc := range testCases {
