@@ -3,7 +3,6 @@ An example service using [groupcache](https://github.com/mailgun/groupcache) as 
 
 ## Running
 
-
 ### minikube
 
 1. run `make run` (note: starts a continuous process in the terminal for a tunnel to the deployment)
@@ -41,7 +40,7 @@ $ curl "http://127.0.0.1:8080/data/some-id"
 3. run `docker-compose down` to tear down the services
 
 ## Sending Requests
-Send a request to the `nginx` service which will be proxied to one of the api services.
+Send a request to the `nginx` (if using `docker-compose`) service which will be proxied to one of the api services.
 
 ```bash
 $ curl "http://localhost:8080/data/U4JcsWos6U3sgfYaq1vhI8ssln0wTmys"
@@ -66,3 +65,18 @@ Above are three different requests all for the same key.
 * the first goes to `server-01_1` which makes a request to `server-03` (the owner of the key). `server-03` does not have the key in the cache so it looks it up in the backend
 * the second goes to `server-02` which makes a request to `server-03` to get the data
 * the third goes to `server-03` which is the owner of the key, but the item is cached from the first call, so it returns immediately.
+
+## wrk2
+a script ([requests.wrk.lua](./requests.wrk.lua)) is provided to use with `wrk2` to generate load to see the service in action.
+
+To install `wrk2` do the following:
+```bash
+$ brew tap jabley/homebrew-wrk2
+$ brew install --HEAD wrk2
+```
+
+This script randomly generates ids to fetch from 1-100 to simulate a variety of hot links. To run the script, specify it as the script arg to `wrk2`. For example:
+```bash
+$ wrk2 --rate 250 --connections 10 --duration 15 --threads 2 --script requests.wrk.lua http://127.0.0.1:62836
+```
+note: replace the url with the url for the service (either from the minikube tunnel or the docker-compose service)
