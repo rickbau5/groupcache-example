@@ -7,8 +7,9 @@ services:
     ports:
       - "3001:3000"
     environment:
-      GROUPCACHE_ADDR_SELF: "http://server-01:3000"
-      GROUPCACHE_ADDR_PEERS: "http://server-02:3000,http://server-03:3000"
+      PEERS_TYPE: "set"
+      PEERS_SELF: "http://server-01:3000"
+      PEERS_SET: "http://server-01:3000,http://server-02:3000,http://server-03:3000"
 
   server-02:
     build: .
@@ -16,8 +17,9 @@ services:
     ports:
       - "3002:3000"
     environment:
-      GROUPCACHE_ADDR_SELF: "http://server-02:3000"
-      GROUPCACHE_ADDR_PEERS: "http://server-01:3000,http://server-03:3000"
+      PEERS_TYPE: "set"
+      PEERS_SELF: "http://server-02:3000"
+      PEERS_SET: "http://server-01:3000,http://server-02:3000,http://server-03:3000"
 
   server-03:
     build: .
@@ -25,8 +27,9 @@ services:
     ports:
       - "3003:3000"
     environment:
-      GROUPCACHE_ADDR_SELF: "http://server-03:3000"
-      GROUPCACHE_ADDR_PEERS: "http://server-01:3000,http://server-02:3000"
+      PEERS_TYPE: "set"
+      PEERS_SELF: "http://server-03:3000"
+      PEERS_SET: "http://server-01:3000,http://server-02:3000,http://server-03:3000"
 
   nginx:
     image: nginx:1.19.2

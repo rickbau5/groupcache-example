@@ -5,48 +5,79 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"net/http"
+	"net/http/pprof"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/gofiber/adaptor/v2"
 	"github.com/gofiber/fiber/v2"
-	"github.com/gofiber/fiber/v2/middleware/logger"
+	mlogger "github.com/gofiber/fiber/v2/middleware/logger"
 	"github.com/mailgun/groupcache"
+	"github.com/sirupsen/logrus"
 	"golang.org/x/sync/errgroup"
 )
 
+var (
+	logLevel        = os.Getenv("LOG_LEVEL")
+	logRequests, _  = strconv.ParseBool(os.Getenv("LOG_REQUESTS"))
+	pprofEnabled, _ = strconv.ParseBool(os.Getenv("PPROF_ENABLED"))
+)
+
 func main() {
-	app := fiber.New()
-
-	stdoutLogger := log.New(os.Stdout, "", log.LstdFlags)
-
 	var (
-		me    = os.Getenv("GROUPCACHE_ADDR_SELF")
-		peers = append(strings.Split(os.Getenv("GROUPCACHE_ADDR_PEERS"), ","), me)
-		ttl   = time.Duration(1 * time.Minute)
+		app = fiber.New()
+		ttl = time.Duration(1 * time.Minute)
 	)
 
-	stdoutLogger.Printf("groupcache:\n\tmy address: %s\n\tpeer addresses: %v", me, peers)
+	logger, err := configureLogger(logLevel)
+	if err != nil {
+		panic(err)
+	}
 
-	// set up the backend impl which will be used to fetch data on cache misses
-	backend := backendImpl{}
+	if logRequests {
+		logger.Info("request logger enabled")
+		app.Use(mlogger.New())
+	}
 
+	peers, self, err := configurePeerMaintainer(logger)
+	if err != nil {
+		logger.WithError(err).Fatalln("failed creating peer maintainer")
+		return
+	}
+
+	logger.WithFields(logrus.Fields{"self": self}).Debug("configured peer maintainer")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	// create the pool which describes all the nodes participating
 	httpPoolOptions := &groupcache.HTTPPoolOptions{
 		BasePath: "/_groupcache/",
 	}
-	pool := groupcache.NewHTTPPoolOpts(me, httpPoolOptions)
-	pool.Set(peers...)
+
+	pool := groupcache.NewHTTPPoolOpts(self, httpPoolOptions)
+	// TODO: this needs to go into the errgroup
+	go func() {
+		err := peers.Maintain(ctx, func(peers ...string) {
+			logger.WithFields(logrus.Fields{"self": self, "peers": peers}).Info("setting peers")
+			pool.Set(peers...)
+		})
+		if err != nil {
+			logger.WithError(err).Fatalln("failed maintaining peers")
+		}
+	}()
+
+	// set up the backend impl which will be used to fetch data on cache misses
+	backend := backendImpl{}
 
 	// create the group that the pool will use to fetch data from the underlying backend
 	//  - this is only called by this instance when it is determined to own the key requested
 	group := groupcache.NewGroup("data", 3000000, groupcache.GetterFunc(
 		func(_ groupcache.Context, key string, dest groupcache.Sink) error {
-			stdoutLogger.Println("fetching key from backend:", key)
+			logger.WithField("key", key).Info("fetching key from backend")
 
 			ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
 			defer cancel()
@@ -85,7 +116,6 @@ func main() {
 	cachingBackend := backendCacheImpl{cache: group}
 
 	// set up the route other services will call
-	app.Use("/data/:guid", logger.New())
 	app.Get("/data/:guid", func(ctx *fiber.Ctx) error {
 		guid := ctx.Params("guid")
 		if guid == "" {
@@ -102,21 +132,29 @@ func main() {
 	})
 
 	// set up the groupcache routes (these are internal to groupcache and how it communicates with peers
-	groupCachePath := fmt.Sprintf("%s+", httpPoolOptions.BasePath)
-	app.Use(groupCachePath, logger.New())
 	app.Get(fmt.Sprintf("%s+", httpPoolOptions.BasePath), adaptor.HTTPHandler(pool))
 
-	// print group stats with the logger
-	go monitorGroup(group, stdoutLogger)
-
-	if err := run(app, stdoutLogger); err != nil {
-		stdoutLogger.Fatalln("app exiting with error:", err)
+	// add pprof endpoints if enabled
+	if pprofEnabled {
+		pprofGroup := app.Group("/debug/pprof")
+		pprofGroup.Get("/cmdline", adaptor.HTTPHandlerFunc(pprof.Cmdline))
+		pprofGroup.Get("/profile", adaptor.HTTPHandlerFunc(pprof.Profile))
+		pprofGroup.Get("/symbol", adaptor.HTTPHandlerFunc(pprof.Symbol))
+		pprofGroup.Get("/trace", adaptor.HTTPHandlerFunc(pprof.Trace))
+		pprofGroup.Get("/:profile?", adaptor.HTTPHandlerFunc(pprof.Index))
 	}
 
-	stdoutLogger.Println("app exiting cleanly")
+	// print group stats with the logger
+	go monitorGroup(group, logger)
+
+	if err := run(app, logger); err != nil {
+		logger.WithError(err).Fatal("app exiting with error")
+	}
+
+	logger.Println("app exiting cleanly")
 }
 
-func run(app *fiber.App, logger *log.Logger) error {
+func run(app *fiber.App, logger *logrus.Logger) error {
 	grp, ctx := errgroup.WithContext(context.Background())
 
 	errShuttingDown := errors.New("shutting down")
@@ -157,14 +195,63 @@ func run(app *fiber.App, logger *log.Logger) error {
 	return nil
 }
 
-func monitorGroup(group *groupcache.Group, logger *log.Logger) {
+func monitorGroup(group *groupcache.Group, logger *logrus.Logger) {
 	for range time.Tick(15 * time.Second) {
-		print := func(message string, i interface{}) {
-			bs, _ := json.Marshal(i)
-			logger.Println(message, string(bs))
-		}
-		print("stats", group.Stats)
-		print("main cache", group.CacheStats(groupcache.MainCache))
-		print("hot cache", group.CacheStats(groupcache.HotCache))
+		logger.WithFields(logrus.Fields{
+			"stats":      group.Stats,
+			"main_cache": group.CacheStats(groupcache.MainCache),
+			"hot_cache":  group.CacheStats(groupcache.HotCache),
+		}).Debug("cache stats")
 	}
+}
+
+func configurePeerMaintainer(logger *logrus.Logger) (Peers, string, error) {
+	peersType := os.Getenv("PEERS_TYPE")
+
+	var (
+		self  = os.Getenv("PEERS_SELF")
+		peers Peers
+	)
+
+	switch peersType {
+	case "pods":
+		namespace := os.Getenv("GUBERNATOR_NAMESPACE")
+		selector := os.Getenv("GUBERNATOR_SELECTOR")
+		podPort := os.Getenv("GUBERNATOR_POD_PORT")
+		podIP := os.Getenv("GUBERNATOR_POD_IP")
+
+		if self == "" {
+			if podIP == "" {
+				return nil, "", errors.New("one of GUBERNATOR_POD_IP or PEERS_SELF must be set")
+			}
+
+			self = fmt.Sprintf("http://%s:%s", podIP, podPort)
+		}
+
+		logger.WithFields(logrus.Fields{"namespace": namespace, "selector": selector, "self": self, "podPort": podPort}).
+			Debug("configuring kubernetes peers maintainer")
+
+		peers = NewKubernetesPeers(namespace, selector, self, podPort, logger)
+	case "set":
+		peers = PeerSet(strings.Split(os.Getenv("PEERS_SET"), ",")...)
+	case "":
+		return nil, "", errors.New("PEERS_TYPE required")
+	default:
+		return nil, "", fmt.Errorf("unsupported PEERS_TYPE: %s", peersType)
+	}
+
+	return peers, self, nil
+}
+
+func configureLogger(level string) (*logrus.Logger, error) {
+	lvl, err := logrus.ParseLevel(level)
+	if err != nil {
+		return nil, err
+	}
+
+	logger := logrus.New()
+	logger.SetLevel(lvl)
+	logger.SetFormatter(&logrus.JSONFormatter{})
+
+	return logger, nil
 }
