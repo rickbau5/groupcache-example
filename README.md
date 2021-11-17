@@ -2,14 +2,43 @@
 An example service using [groupcache](https://github.com/mailgun/groupcache) as a distributed in memory cache.
 
 ## Running
+
+
+### minikube
+
+1. run `make run` (note: starts a continuous process in the terminal for a tunnel to the deployment)
+```bash
+🏃  Starting tunnel for service groupcache-svc.
+|--------------------|----------------|-------------|------------------------|
+|     NAMESPACE      |      NAME      | TARGET PORT |          URL           |
+|--------------------|----------------|-------------|------------------------|
+| groupcache-example | groupcache-svc |             | http://127.0.0.1:50899 |
+|--------------------|----------------|-------------|------------------------|
+http://127.0.0.1:50899
+❗  Because you are using a Docker driver on darwin, the terminal needs to be open to run it.
+```
+2. grab the `URL` from the `run` command, e.g. `http://127.0.0.1:50899`
+3. send a request to the service:
+```bash
+$ curl "http://127.0.0.1:50899/data/some-id`
+{"guid":"some-id","date_created":"2021-11-17T19:39:37.0937256Z"}
+```
+4. View application logs: `make minikube-logs`
+5. run `make clean` to tear down the services
+
+### docker-compose
 A `docker-compose.yml` is provided to run the services locally. This will start three
 instances of a server that can be used to fetch data from a backend and an `nginx` proxy
 to front them. The `nginx` proxy provides a single host to call to load balance
 across the running instances. This is done to see the effects of groupcache in action.
 
+1. run `docker-compose up`
+2. send a request to the service (note: the host will always be on port 8080)
 ```bash
-$ docker-compose up
+$ curl "http://127.0.0.1:8080/data/some-id"
+{"guid":"hi","date_created":"2021-11-17T19:44:52.7587009Z"}
 ```
+3. run `docker-compose down` to tear down the services
 
 ## Sending Requests
 Send a request to the `nginx` service which will be proxied to one of the api services.
