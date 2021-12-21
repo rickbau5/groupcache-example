@@ -112,12 +112,12 @@ func (pool *Pool) cleanupConns() {
 	for peer, conn := range pool.conns {
 		if _, ok := pool.getters[peer]; ok {
 			// in use
-			logrus.WithField("peer", peer).Debug("peer in use")
+			log.Printf("peer in use '%s'", peer)
 			continue
 		}
-		logrus.WithField("peer", peer).Debug("evicting peer")
+		log.Printf("evicting former peer connection '%s'", peer)
 		if err := conn.Close(); err != nil {
-			log.Printf("error closing peer '%s': %s", peer, err)
+			log.Printf("error closing peer connection '%s': %s", peer, err)
 		}
 		evict = append(evict, peer)
 	}
