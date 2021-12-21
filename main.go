@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"groupcache-example/internal/grpcpool"
 	"net/http"
 	"net/http/pprof"
 	"os"
@@ -18,6 +17,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	mlogger "github.com/gofiber/fiber/v2/middleware/logger"
 	"github.com/mailgun/groupcache"
+	"github.com/rickbau5/groupcache-example/internal/grpcpool"
 	"github.com/sirupsen/logrus"
 	"golang.org/x/sync/errgroup"
 )

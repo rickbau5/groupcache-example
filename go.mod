@@ -1,4 +1,4 @@
-module groupcache-example
+module github.com/rickbau5/groupcache-example
 
 go 1.17
 
