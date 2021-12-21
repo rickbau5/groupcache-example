@@ -12,6 +12,7 @@ import (
 type Data struct {
 	GUID        string    `json:"guid"`
 	DateCreated time.Time `json:"date_created"`
+	Creator     string    `json:"creator"`
 }
 
 type Backend interface {
@@ -41,11 +42,14 @@ func (b backendCacheImpl) Get(ctx context.Context, guid string) (*Data, error) {
 	return &data, nil
 }
 
-type backendImpl struct{}
+type backendImpl struct {
+	self string
+}
 
 func (b backendImpl) Get(ctx context.Context, guid string) (*Data, error) {
 	return &Data{
 		GUID:        guid,
 		DateCreated: time.Now(),
+		Creator:     b.self,
 	}, nil
 }

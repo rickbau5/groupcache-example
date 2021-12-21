@@ -122,7 +122,7 @@ func main() {
 	})
 
 	// set up the backend impl which will be used to fetch data on cache misses
-	backend := backendImpl{}
+	backend := backendImpl{self}
 
 	// create the group that the pool will use to fetch data from the underlying backend
 	//  - this is only called by this instance when it is determined to own the key requested
@@ -178,6 +178,7 @@ func main() {
 		if err != nil {
 			return fmt.Errorf("failed getting data: %w", err)
 		}
+		ctx.Set("x-gc-server", self)
 
 		return ctx.JSON(data)
 	})
