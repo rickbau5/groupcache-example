@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/pprof"
 	"os"
@@ -12,6 +13,9 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/rickbau5/groupcache-example/proto"
+	"google.golang.org/grpc"
 
 	"github.com/gofiber/adaptor/v2"
 	"github.com/gofiber/fiber/v2"
@@ -56,11 +60,16 @@ func main() {
 	defer cancel()
 	// create the pool which describes all the nodes participating
 
+	grp, ctx := errgroup.WithContext(ctx)
+
 	var (
 		peerSetter func(...string)
 	)
-	peerProtocol := os.Getenv("PEER_PROTOCOL")
+	peerProtocol := os.Getenv("PEERS_PROTOCOL")
 	switch peerProtocol {
+	case "":
+		// default to http
+		fallthrough
 	case "http":
 		httpPoolOptions := &groupcache.HTTPPoolOptions{
 			BasePath: "/_groupcache/",
@@ -72,31 +81,45 @@ func main() {
 
 		peerSetter = httpPool.Set
 	case "grpc":
-		opts := &grpcpool.Options{}
+		opts := &grpcpool.Options{
+			DialOptions: func(_ string) []grpc.DialOption { return []grpc.DialOption{grpc.WithInsecure()} },
+			DialFn:      grpc.DialContext,
+		}
 		grpcPool := grpcpool.NewGRPCPool(self, opts)
 
-		// TODO: grpc server
+		listenAddr := os.Getenv("LISTEN_ADDR_GRPC")
+		listener, err := net.Listen("tcp", listenAddr)
+		if err != nil {
+			logger.WithError(err).WithField("LISTEN_ADDR_GRPC", listenAddr).Fatalln("failed creating grpc listener")
+			return
+		}
+		defer listener.Close()
+		server := grpc.NewServer()
+		grpcPoolServer := &grpcpool.Server{}
+		proto.RegisterGroupCacheServer(server, grpcPoolServer)
+
+		grp.Go(func() error {
+			return server.Serve(listener)
+		})
 
 		peerSetter = grpcPool.Set
-
-	case "":
-		// default to http
-		fallthrough
 	default:
 		logger.WithField("PEER_PROTOCOL", peerProtocol).Fatalln("unsupported PEER_PROTOCOL")
 		return
 	}
 
-	// TODO: this needs to go into the errgroup
-	go func() {
+	grp.Go(func() error {
 		err := peers.Maintain(ctx, func(peers ...string) {
 			logger.WithFields(logrus.Fields{"self": self, "peers": peers}).Info("setting peers")
 			peerSetter(peers...)
 		})
 		if err != nil {
-			logger.WithError(err).Fatalln("failed maintaining peers")
+			logger.WithError(err).Errorf("failed maintaining peers")
+			return err
 		}
-	}()
+
+		return nil
+	})
 
 	// set up the backend impl which will be used to fetch data on cache misses
 	backend := backendImpl{}
@@ -170,9 +193,16 @@ func main() {
 	}
 
 	// print group stats with the logger
-	go monitorGroup(group, logger)
+	grp.Go(func() error {
+		monitorGroup(group, logger)
+		return nil
+	})
 
-	if err := run(app, logger); err != nil {
+	grp.Go(func() error {
+		return run(app, logger)
+	})
+
+	if err := grp.Wait(); err != nil {
 		logger.WithError(err).Fatal("app exiting with error")
 	}
 
