@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"groupcache-example/internal/grpcpool"
 	"net/http"
 	"net/http/pprof"
 	"os"
@@ -54,16 +55,43 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	// create the pool which describes all the nodes participating
-	httpPoolOptions := &groupcache.HTTPPoolOptions{
-		BasePath: "/_groupcache/",
+
+	var (
+		peerSetter func(...string)
+	)
+	peerProtocol := os.Getenv("PEER_PROTOCOL")
+	switch peerProtocol {
+	case "http":
+		httpPoolOptions := &groupcache.HTTPPoolOptions{
+			BasePath: "/_groupcache/",
+		}
+		httpPool := groupcache.NewHTTPPoolOpts(self, httpPoolOptions)
+
+		// set up the groupcache routes (these are internal to groupcache and how it communicates with peers
+		app.Get(fmt.Sprintf("%s+", httpPoolOptions.BasePath), adaptor.HTTPHandler(httpPool))
+
+		peerSetter = httpPool.Set
+	case "grpc":
+		opts := &grpcpool.Options{}
+		grpcPool := grpcpool.NewGRPCPool(self, opts)
+
+		// TODO: grpc server
+
+		peerSetter = grpcPool.Set
+
+	case "":
+		// default to http
+		fallthrough
+	default:
+		logger.WithField("PEER_PROTOCOL", peerProtocol).Fatalln("unsupported PEER_PROTOCOL")
+		return
 	}
 
-	pool := groupcache.NewHTTPPoolOpts(self, httpPoolOptions)
 	// TODO: this needs to go into the errgroup
 	go func() {
 		err := peers.Maintain(ctx, func(peers ...string) {
 			logger.WithFields(logrus.Fields{"self": self, "peers": peers}).Info("setting peers")
-			pool.Set(peers...)
+			peerSetter(peers...)
 		})
 		if err != nil {
 			logger.WithError(err).Fatalln("failed maintaining peers")
@@ -130,9 +158,6 @@ func main() {
 
 		return ctx.JSON(data)
 	})
-
-	// set up the groupcache routes (these are internal to groupcache and how it communicates with peers
-	app.Get(fmt.Sprintf("%s+", httpPoolOptions.BasePath), adaptor.HTTPHandler(pool))
 
 	// add pprof endpoints if enabled
 	if pprofEnabled {
