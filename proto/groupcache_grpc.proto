@@ -1,0 +1,13 @@
+syntax = "proto3";
+
+import "github.com/mailgun/groupcache/groupcachepb/groupcache.proto";
+
+option go_package = "github.com/rickbau5/grpc-example/proto";
+
+package proto;
+
+service GroupCache {
+  rpc Get(groupcachepb.GetRequest) returns (groupcachepb.GetResponse) {
+  };
+}
+

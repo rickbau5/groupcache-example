@@ -27,7 +27,7 @@ MOD_MODE := -mod=vendor
 GO_TEST := $(GO) test $(MOD_MODE)
 GO_BUILD := $(GO) build $(MOD_MODE)
 
-all: build test
+all: build-proto test build
 
 build: vendor build-go
 
@@ -92,3 +92,5 @@ stop: clean
 
 .PHONY: clean
 clean: minikube-delete .go-clean
+
+include proto/proto.mk
