@@ -275,19 +275,27 @@ func configurePeerMaintainer(logger *logrus.Logger) (Peers, string, error) {
 		selector := os.Getenv("GUBERNATOR_SELECTOR")
 		podPort := os.Getenv("GUBERNATOR_POD_PORT")
 		podIP := os.Getenv("GUBERNATOR_POD_IP")
+		var protocol PeerType
+		if os.Getenv("PEERS_PROTOCOL") == "grpc" {
+			protocol = PeerTypeGRPC
+		}
 
 		if self == "" {
 			if podIP == "" {
 				return nil, "", errors.New("one of GUBERNATOR_POD_IP or PEERS_SELF must be set")
 			}
 
-			self = fmt.Sprintf("http://%s:%s", podIP, podPort)
+			scheme := "http://"
+			if protocol == PeerTypeGRPC {
+				scheme = ""
+			}
+			self = fmt.Sprintf("%s%s:%s", scheme, podIP, podPort)
 		}
 
 		logger.WithFields(logrus.Fields{"namespace": namespace, "selector": selector, "self": self, "podPort": podPort}).
 			Debug("configuring kubernetes peers maintainer")
 
-		peers = NewKubernetesPeers(namespace, selector, self, podPort, logger)
+		peers = NewKubernetesPeers(namespace, selector, self, podPort, protocol, logger)
 	case "set":
 		peers = PeerSet(strings.Split(os.Getenv("PEERS_SET"), ",")...)
 	case "":

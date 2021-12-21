@@ -43,15 +43,11 @@ func TestKubernetesPeers_set(t *testing.T) {
 	for _, tc := range testCases {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
-			var actual []string
 			kp := KubernetesPeers{
-				setter: func(s ...string) {
-					actual = s
-				},
 				logger: logrus.New(),
 			}
 
-			kp.set(tc.infos)
+			actual := kp.infosToHttpAddresses(tc.infos)
 
 			assert.Equal(t, tc.expected, actual)
 		})
