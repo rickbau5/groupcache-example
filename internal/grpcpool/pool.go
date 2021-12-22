@@ -144,11 +144,17 @@ func (pool *Pool) GetAll() []groupcache.ProtoGetter {
 	pool.mu.Lock()
 	defer pool.mu.Unlock()
 
-	var i int
-	res := make([]groupcache.ProtoGetter, len(pool.getters))
-	for _, v := range pool.getters {
-		res[i] = v
-		i++
+	res := make([]groupcache.ProtoGetter, 0)
+	for peer, v := range pool.getters {
+		if peer == pool.self {
+			// don't return self as a peer - used to prevent a distributed deadlock during removal
+			continue
+		}
+		if v == nil {
+			pool.logger.WithField("peer", peer).Warn("peer getter is nil")
+			continue
+		}
+		res = append(res, v)
 	}
 	return res
 }
@@ -188,13 +194,23 @@ func (g *grpcGetter) Get(ctx groupcache.Context, in *groupcachepb.GetRequest, ou
 		return errors.New("got nil response")
 	}
 
-	l.WithField("resp", resp).Debug("got response")
-
 	*out = *resp
 	return nil
 }
 
-func (g *grpcGetter) Remove(context groupcache.Context, in *groupcachepb.GetRequest) error {
-	// TODO implement me
-	panic("implement me")
+func (g *grpcGetter) Remove(ctx groupcache.Context, in *groupcachepb.GetRequest) error {
+	g.logger.WithFields(logrus.Fields{"peer": g.peer, "group": in.GetGroup(), "key": in.GetKey()}).
+		Debug("removing from peer")
+
+	_, err := g.client.Remove(ctx.(context.Context), &proto.RemoveRequest{
+		Group: in.GetGroup(),
+		Key:   in.GetKey(),
+	})
+	if err != nil {
+		g.logger.WithFields(logrus.Fields{"peer": g.peer, "group": in.GetGroup(), "key": in.GetKey()}).
+			WithError(err).
+			Warning("error removing from peer")
+		return err
+	}
+	return nil
 }

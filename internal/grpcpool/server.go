@@ -3,8 +3,11 @@ package grpcpool
 import (
 	"context"
 
+	"google.golang.org/protobuf/types/known/emptypb"
+
 	"github.com/mailgun/groupcache"
 	"github.com/mailgun/groupcache/groupcachepb"
+	"github.com/rickbau5/groupcache-example/proto"
 	pb "github.com/rickbau5/groupcache-example/proto"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -35,4 +38,12 @@ func (srv *Server) Get(ctx context.Context, get *groupcachepb.GetRequest) (*grou
 		// Expire: view.Expire().UnixNano(),
 		XXX_unrecognized: nil,
 	}, nil
+}
+
+func (srv *Server) Remove(ctx context.Context, rem *proto.RemoveRequest) (*emptypb.Empty, error) {
+	group := groupcache.GetGroup(rem.GetGroup())
+	group.Stats.ServerRequests.Add(1)
+
+	// this should be `group.localRemove`, of course that is not exported so we can't.
+	return &emptypb.Empty{}, group.Remove(ctx, rem.GetKey())
 }

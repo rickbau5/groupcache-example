@@ -1,13 +1,19 @@
 syntax = "proto3";
 
 import "github.com/mailgun/groupcache/groupcachepb/groupcache.proto";
+import "google/protobuf/empty.proto";
 
 option go_package = "github.com/rickbau5/grpc-example/proto";
 
 package proto;
 
 service GroupCache {
-  rpc Get(groupcachepb.GetRequest) returns (groupcachepb.GetResponse) {
-  };
+  rpc Get(groupcachepb.GetRequest) returns (groupcachepb.GetResponse) {};
+  rpc Remove(RemoveRequest) returns (google.protobuf.Empty) {};
 }
 
+
+message RemoveRequest {
+  string group = 1;
+  string key = 2;
+}

@@ -4,7 +4,7 @@ build-proto: proto-deps $(objects)
 
 proto-deps: proto/github.com/mailgun/groupcache/groupcachepb/groupcache.proto
 
-$(objects):
+$(objects): proto/groupcache_grpc.proto
 	protoc --go_out=proto/ --go_opt=paths=source_relative \
 		--go-grpc_out=proto/ --go-grpc_opt=paths=source_relative \
 		-I proto/. \
