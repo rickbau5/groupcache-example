@@ -77,7 +77,9 @@ func main() {
 		httpPool := groupcache.NewHTTPPoolOpts(self, httpPoolOptions)
 
 		// set up the groupcache routes (these are internal to groupcache and how it communicates with peers
-		app.Get(fmt.Sprintf("%s+", httpPoolOptions.BasePath), adaptor.HTTPHandler(httpPool))
+		httpPoolAdapter := adaptor.HTTPHandler(httpPool)
+		app.Get(fmt.Sprintf("%s+", httpPoolOptions.BasePath), httpPoolAdapter)
+		app.Delete(fmt.Sprintf("%s+", httpPoolOptions.BasePath), httpPoolAdapter)
 
 		peerSetter = httpPool.Set
 	case "grpc":
@@ -187,6 +189,20 @@ func main() {
 		ctx.Set("x-gc-server", self)
 
 		return ctx.JSON(data)
+	})
+
+	app.Delete("/data/:guid", func(ctx *fiber.Ctx) error {
+		guid := ctx.Params("guid")
+		if guid == "" {
+			return ctx.Status(http.StatusBadRequest).SendString("guid missing")
+		}
+
+		err := group.Remove(ctx.UserContext(), guid)
+		if err != nil {
+			return ctx.Status(http.StatusInternalServerError).SendString("unable to remove: " + err.Error())
+		}
+
+		return nil
 	})
 
 	// add pprof endpoints if enabled
