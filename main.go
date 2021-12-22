@@ -84,6 +84,7 @@ func main() {
 		opts := &grpcpool.Options{
 			DialOptions: func(_ string) []grpc.DialOption { return []grpc.DialOption{grpc.WithInsecure()} },
 			DialFn:      grpc.DialContext,
+			Logger:      logger,
 		}
 		grpcPool := grpcpool.NewGRPCPool(self, opts)
 
@@ -127,10 +128,15 @@ func main() {
 	// create the group that the pool will use to fetch data from the underlying backend
 	//  - this is only called by this instance when it is determined to own the key requested
 	group := groupcache.NewGroup("data", 3000000, groupcache.GetterFunc(
-		func(_ groupcache.Context, key string, dest groupcache.Sink) error {
+		func(gcCtx groupcache.Context, key string, dest groupcache.Sink) error {
 			logger.WithField("key", key).Info("fetching key from backend")
 
-			ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+			ctx := context.Background()
+			if cctx, ok := gcCtx.(context.Context); ok {
+				ctx = cctx
+			}
+
+			ctx, cancel := context.WithTimeout(ctx, 250*time.Millisecond)
 			defer cancel()
 
 			data, err := backend.Get(ctx, key)

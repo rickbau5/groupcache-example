@@ -3,7 +3,6 @@ package grpcpool
 import (
 	"context"
 	"errors"
-	"log"
 	"sync"
 	"time"
 
@@ -21,9 +20,9 @@ import (
 type Options struct {
 	Replicas    int
 	HashFn      consistenthash.Hash
-	Context     func() context.Context
 	DialOptions func(addr string) []grpc.DialOption
 	DialFn      func(context.Context, string, ...grpc.DialOption) (*grpc.ClientConn, error)
+	Logger      *logrus.Logger
 }
 
 type Pool struct {
@@ -34,6 +33,8 @@ type Pool struct {
 	peers   *consistenthash.Map
 	getters map[string]*grpcGetter
 	conns   map[string]*grpc.ClientConn
+
+	logger *logrus.Logger
 }
 
 var grpcPoolMade bool
@@ -59,11 +60,14 @@ func NewGRPCPool(self string, opt *Options) *Pool {
 	if pool.opts.DialFn == nil {
 		pool.opts.DialFn = grpc.DialContext
 	}
-	if pool.opts.Context == nil {
-		pool.opts.Context = context.Background
-	}
 	if pool.opts.DialOptions == nil {
 		pool.opts.DialOptions = func(string) []grpc.DialOption { return nil }
+	}
+
+	pool.logger = pool.opts.Logger
+	if pool.logger == nil {
+		pool.logger = logrus.New()
+		pool.logger.SetLevel(logrus.WarnLevel)
 	}
 
 	pool.peers = consistenthash.New(pool.opts.Replicas, pool.opts.HashFn)
@@ -89,18 +93,25 @@ func (pool *Pool) Set(peers ...string) {
 		if !ok {
 			// TODO: maybe lazily do this
 			// attempt to create a connection
-			log.Println("dialing peer:", peer)
+			pool.logger.WithField("peer", peer).Debug("dialing peer")
 			var err error
-			conn, err = pool.opts.DialFn(pool.opts.Context(), peer, pool.opts.DialOptions(peer)...)
+			ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+			conn, err = pool.opts.DialFn(ctx, peer, pool.opts.DialOptions(peer)...)
 			if err != nil {
-				log.Println("failed dialing peer, skipping:", err)
+				pool.logger.WithField("peer", peer).Warn("failed dialing peer, removing from pool")
+				cancel()
 				continue
 			}
-			log.Println("connected to peer:", peer)
+			cancel()
+			pool.logger.WithField("peer", peer).Debug("connected to peer")
 
 			pool.conns[peer] = conn
 		}
-		pool.getters[peer] = &grpcGetter{client: proto.NewGroupCacheClient(conn), peer: peer}
+		pool.getters[peer] = &grpcGetter{
+			client: proto.NewGroupCacheClient(conn),
+			peer:   peer,
+			logger: pool.logger,
+		}
 		pool.peers.Add(peer)
 	}
 }
@@ -112,18 +123,20 @@ func (pool *Pool) cleanupConns() {
 	for peer, conn := range pool.conns {
 		if _, ok := pool.getters[peer]; ok {
 			// in use
-			log.Printf("peer in use '%s'", peer)
+			pool.logger.WithField("peer", peer).Debug("open connection still in use")
 			continue
 		}
-		log.Printf("evicting former peer connection '%s'", peer)
 		if err := conn.Close(); err != nil {
-			log.Printf("error closing peer connection '%s': %s", peer, err)
+			pool.logger.WithField("peer", peer).WithError(err).Warning("error closing former peer connection")
 		}
 		evict = append(evict, peer)
 	}
 
-	for _, peer := range evict {
-		delete(pool.conns, peer)
+	if len(evict) > 0 {
+		pool.logger.WithField("peers", evict).Info("evicting former peer connections")
+		for _, peer := range evict {
+			delete(pool.conns, peer)
+		}
 	}
 }
 
@@ -155,23 +168,23 @@ func (pool *Pool) PickPeer(key string) (groupcache.ProtoGetter, bool) {
 type grpcGetter struct {
 	client proto.GroupCacheClient
 	peer   string
+	logger *logrus.Logger
 }
 
 func (g *grpcGetter) Get(ctx groupcache.Context, in *groupcachepb.GetRequest, out *groupcachepb.GetResponse) error {
-	l := logrus.WithFields(logrus.Fields{"peer": g.peer, "group": in.GetGroup(), "key": in.GetKey()})
+	l := g.logger.WithFields(logrus.Fields{"peer": g.peer, "group": in.GetGroup(), "key": in.GetKey()})
 	l.WithField("in", in).Debug("getting from peer")
 	if out == nil {
-		l.Warning("out is nil")
 		return errors.New("out must not be nil")
 	}
 
-	l.Debug("calling peer")
 	resp, err := g.client.Get(ctx.(context.Context), in)
 	if err != nil {
 		l.WithError(err).Warning("error calling peer")
 		return err
 	}
 	if resp == nil {
+		l.Warning("got nil response from call")
 		return errors.New("got nil response")
 	}
 
