@@ -80,3 +80,73 @@ This script randomly generates ids to fetch from 1-100 to simulate a variety of 
 $ wrk2 --rate 250 --connections 10 --duration 15 --threads 2 --script requests.wrk.lua http://127.0.0.1:62836
 ```
 note: replace the url with the url for the service (either from the minikube tunnel or the docker-compose service)
+
+## gRPC vs HTTP
+
+Comparison of performance of gRPC vs HTTP on a local machine.
+
+Steps to prepare:
+1. `make run`
+2. restart the deployment to clear the caches
+3. scale deployment to `3` if it was changes
+
+### gRPC
+freshly initialized services, no pre-warming of cache:
+```bash
+$ wrk2 --rate 500 --connections 10 --duration 15 --threads 2 --script requests.wrk.lua http://127.0.0.1:61785
+Running 15s test @ http://127.0.0.1:61785
+  2 threads and 10 connections
+  Thread calibration: mean lat.: 4.831ms, rate sampling interval: 15ms
+  Thread calibration: mean lat.: 5.076ms, rate sampling interval: 15ms
+  Thread Stats   Avg      Stdev     Max   +/- Stdev
+    Latency    11.01ms   21.58ms 172.67ms   93.69%
+    Req/Sec   259.43    118.51     1.07k    85.82%
+  7499 requests in 15.00s, 1.61MB read
+Requests/sec:    499.88
+Transfer/sec:    109.73KB
+```
+
+pre-warmed (after previous run) services:
+```bash
+$ wrk2 --rate 500 --connections 10 --duration 15 --threads 2 --script requests.wrk.lua http://127.0.0.1:61785
+Running 15s test @ http://127.0.0.1:61785
+  2 threads and 10 connections
+  Thread calibration: mean lat.: 5.056ms, rate sampling interval: 14ms
+  Thread calibration: mean lat.: 4.675ms, rate sampling interval: 14ms
+  Thread Stats   Avg      Stdev     Max   +/- Stdev
+    Latency     4.68ms    2.07ms   8.44ms   55.67%
+    Req/Sec   258.41     62.58   384.00     75.97%
+  7499 requests in 15.01s, 1.61MB read
+Requests/sec:    499.74
+Transfer/sec:    109.68KB
+```
+
+### HTTP
+freshly initialized services, no pre-warming of cache:
+```bash
+$ wrk2 --rate 500 --connections 10 --duration 15 --threads 2 --script requests.wrk.lua http://127.0.0.1:61785
+Running 15s test @ http://127.0.0.1:61785
+  2 threads and 10 connections
+  Thread calibration: mean lat.: 5.543ms, rate sampling interval: 14ms
+  Thread calibration: mean lat.: 5.593ms, rate sampling interval: 14ms
+  Thread Stats   Avg      Stdev     Max   +/- Stdev
+    Latency     4.77ms    2.20ms   8.63ms   53.60%
+    Req/Sec   258.47     61.85   384.00     78.03%
+  7500 requests in 15.01s, 1.71MB read
+Requests/sec:    499.72
+Transfer/sec:    116.55KB```
+
+pre-warmed (after previous run) services
+```bash
+$ wrk2 --rate 500 --connections 10 --duration 15 --threads 2 --script requests.wrk.lua http://127.0.0.1:61785
+Running 15s test @ http://127.0.0.1:61785
+  2 threads and 10 connections
+  Thread calibration: mean lat.: 5.520ms, rate sampling interval: 14ms
+  Thread calibration: mean lat.: 4.965ms, rate sampling interval: 14ms
+  Thread Stats   Avg      Stdev     Max   +/- Stdev
+    Latency     4.53ms    2.13ms   8.86ms   53.90%
+    Req/Sec   259.25     62.27   384.00     77.57%
+  7500 requests in 15.01s, 1.71MB read
+Requests/sec:    499.77
+Transfer/sec:    116.55KB
+```

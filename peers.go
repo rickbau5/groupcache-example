@@ -48,20 +48,9 @@ const (
 )
 
 func NewKubernetesPeers(namespace, selector, podIP, podPort string, peerType PeerType, logger *logrus.Logger) *KubernetesPeers {
-	var kp *KubernetesPeers
-
-	var transformInfos func([]gubernator.PeerInfo) []string
-	if peerType == PeerTypeGRPC {
-		transformInfos = kp.infosToGRPCAddresses
-	} else {
-		transformInfos = kp.infosToHttpAddresses
-	}
-
-	kp = &KubernetesPeers{
+	kp := &KubernetesPeers{
 		poolConfig: gubernator.K8sPoolConfig{
-			OnUpdate: func(infos []gubernator.PeerInfo) {
-				kp.set(transformInfos(infos))
-			},
+			OnUpdate:  nil, // later
 			Logger:    logger,
 			Mechanism: gubernator.WatchPods,
 			Namespace: namespace,
@@ -76,6 +65,17 @@ func NewKubernetesPeers(namespace, selector, podIP, podPort string, peerType Pee
 		},
 
 		init: sync.Once{},
+	}
+
+	var transformInfos func([]gubernator.PeerInfo) []string
+	if peerType == PeerTypeGRPC {
+		transformInfos = kp.infosToGRPCAddresses
+	} else {
+		transformInfos = kp.infosToHttpAddresses
+	}
+
+	kp.poolConfig.OnUpdate = func(infos []gubernator.PeerInfo) {
+		kp.set(transformInfos(infos))
 	}
 
 	return kp
