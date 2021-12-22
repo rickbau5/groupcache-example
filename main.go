@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/pprof"
 	"os"
@@ -13,10 +14,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/rickbau5/groupcache-example/proto"
+	"google.golang.org/grpc"
+
 	"github.com/gofiber/adaptor/v2"
 	"github.com/gofiber/fiber/v2"
 	mlogger "github.com/gofiber/fiber/v2/middleware/logger"
 	"github.com/mailgun/groupcache"
+	"github.com/rickbau5/groupcache-example/internal/grpcpool"
 	"github.com/sirupsen/logrus"
 	"golang.org/x/sync/errgroup"
 )
@@ -54,32 +59,86 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	// create the pool which describes all the nodes participating
-	httpPoolOptions := &groupcache.HTTPPoolOptions{
-		BasePath: "/_groupcache/",
+
+	grp, ctx := errgroup.WithContext(ctx)
+
+	var (
+		peerSetter func(...string)
+	)
+	peerProtocol := os.Getenv("PEERS_PROTOCOL")
+	switch peerProtocol {
+	case "":
+		// default to http
+		fallthrough
+	case "http":
+		httpPoolOptions := &groupcache.HTTPPoolOptions{
+			BasePath: "/_groupcache/",
+		}
+		httpPool := groupcache.NewHTTPPoolOpts(self, httpPoolOptions)
+
+		// set up the groupcache routes (these are internal to groupcache and how it communicates with peers
+		httpPoolAdapter := adaptor.HTTPHandler(httpPool)
+		app.Get(fmt.Sprintf("%s+", httpPoolOptions.BasePath), httpPoolAdapter)
+		app.Delete(fmt.Sprintf("%s+", httpPoolOptions.BasePath), httpPoolAdapter)
+
+		peerSetter = httpPool.Set
+	case "grpc":
+		opts := &grpcpool.Options{
+			DialOptions: func(_ string) []grpc.DialOption { return []grpc.DialOption{grpc.WithInsecure()} },
+			DialFn:      grpc.DialContext,
+			Logger:      logger,
+		}
+		grpcPool := grpcpool.NewGRPCPool(self, opts)
+
+		listenAddr := os.Getenv("LISTEN_ADDR_GRPC")
+		listener, err := net.Listen("tcp", listenAddr)
+		if err != nil {
+			logger.WithError(err).WithField("LISTEN_ADDR_GRPC", listenAddr).Fatalln("failed creating grpc listener")
+			return
+		}
+		defer listener.Close()
+		server := grpc.NewServer()
+		grpcPoolServer := &grpcpool.Server{}
+		proto.RegisterGroupCacheServer(server, grpcPoolServer)
+
+		grp.Go(func() error {
+			return server.Serve(listener)
+		})
+
+		peerSetter = grpcPool.Set
+	default:
+		logger.WithField("PEER_PROTOCOL", peerProtocol).Fatalln("unsupported PEER_PROTOCOL")
+		return
 	}
 
-	pool := groupcache.NewHTTPPoolOpts(self, httpPoolOptions)
-	// TODO: this needs to go into the errgroup
-	go func() {
+	grp.Go(func() error {
 		err := peers.Maintain(ctx, func(peers ...string) {
 			logger.WithFields(logrus.Fields{"self": self, "peers": peers}).Info("setting peers")
-			pool.Set(peers...)
+			peerSetter(peers...)
 		})
 		if err != nil {
-			logger.WithError(err).Fatalln("failed maintaining peers")
+			logger.WithError(err).Errorf("failed maintaining peers")
+			return err
 		}
-	}()
+
+		return nil
+	})
 
 	// set up the backend impl which will be used to fetch data on cache misses
-	backend := backendImpl{}
+	backend := backendImpl{self}
 
 	// create the group that the pool will use to fetch data from the underlying backend
 	//  - this is only called by this instance when it is determined to own the key requested
 	group := groupcache.NewGroup("data", 3000000, groupcache.GetterFunc(
-		func(_ groupcache.Context, key string, dest groupcache.Sink) error {
+		func(gcCtx groupcache.Context, key string, dest groupcache.Sink) error {
 			logger.WithField("key", key).Info("fetching key from backend")
 
-			ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+			ctx := context.Background()
+			if cctx, ok := gcCtx.(context.Context); ok {
+				ctx = cctx
+			}
+
+			ctx, cancel := context.WithTimeout(ctx, 250*time.Millisecond)
 			defer cancel()
 
 			data, err := backend.Get(ctx, key)
@@ -127,12 +186,24 @@ func main() {
 		if err != nil {
 			return fmt.Errorf("failed getting data: %w", err)
 		}
+		ctx.Set("x-gc-server", self)
 
 		return ctx.JSON(data)
 	})
 
-	// set up the groupcache routes (these are internal to groupcache and how it communicates with peers
-	app.Get(fmt.Sprintf("%s+", httpPoolOptions.BasePath), adaptor.HTTPHandler(pool))
+	app.Delete("/data/:guid", func(ctx *fiber.Ctx) error {
+		guid := ctx.Params("guid")
+		if guid == "" {
+			return ctx.Status(http.StatusBadRequest).SendString("guid missing")
+		}
+
+		err := group.Remove(ctx.UserContext(), guid)
+		if err != nil {
+			return ctx.Status(http.StatusInternalServerError).SendString("unable to remove: " + err.Error())
+		}
+
+		return nil
+	})
 
 	// add pprof endpoints if enabled
 	if pprofEnabled {
@@ -145,9 +216,16 @@ func main() {
 	}
 
 	// print group stats with the logger
-	go monitorGroup(group, logger)
+	grp.Go(func() error {
+		monitorGroup(group, logger)
+		return nil
+	})
 
-	if err := run(app, logger); err != nil {
+	grp.Go(func() error {
+		return run(app, logger)
+	})
+
+	if err := grp.Wait(); err != nil {
 		logger.WithError(err).Fatal("app exiting with error")
 	}
 
@@ -219,19 +297,27 @@ func configurePeerMaintainer(logger *logrus.Logger) (Peers, string, error) {
 		selector := os.Getenv("GUBERNATOR_SELECTOR")
 		podPort := os.Getenv("GUBERNATOR_POD_PORT")
 		podIP := os.Getenv("GUBERNATOR_POD_IP")
+		var protocol PeerType
+		if os.Getenv("PEERS_PROTOCOL") == "grpc" {
+			protocol = PeerTypeGRPC
+		}
 
 		if self == "" {
 			if podIP == "" {
 				return nil, "", errors.New("one of GUBERNATOR_POD_IP or PEERS_SELF must be set")
 			}
 
-			self = fmt.Sprintf("http://%s:%s", podIP, podPort)
+			scheme := "http://"
+			if protocol == PeerTypeGRPC {
+				scheme = ""
+			}
+			self = fmt.Sprintf("%s%s:%s", scheme, podIP, podPort)
 		}
 
 		logger.WithFields(logrus.Fields{"namespace": namespace, "selector": selector, "self": self, "podPort": podPort}).
 			Debug("configuring kubernetes peers maintainer")
 
-		peers = NewKubernetesPeers(namespace, selector, self, podPort, logger)
+		peers = NewKubernetesPeers(namespace, selector, self, podPort, protocol, logger)
 	case "set":
 		peers = PeerSet(strings.Split(os.Getenv("PEERS_SET"), ",")...)
 	case "":

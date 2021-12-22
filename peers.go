@@ -40,14 +40,17 @@ type KubernetesPeers struct {
 	init sync.Once
 }
 
-func NewKubernetesPeers(namespace, selector, podIP, podPort string, logger *logrus.Logger) *KubernetesPeers {
-	var kp *KubernetesPeers
+type PeerType int
 
-	kp = &KubernetesPeers{
+const (
+	PeerTypeHTTP = iota
+	PeerTypeGRPC
+)
+
+func NewKubernetesPeers(namespace, selector, podIP, podPort string, peerType PeerType, logger *logrus.Logger) *KubernetesPeers {
+	kp := &KubernetesPeers{
 		poolConfig: gubernator.K8sPoolConfig{
-			OnUpdate: func(infos []gubernator.PeerInfo) {
-				kp.set(infos)
-			},
+			OnUpdate:  nil, // later
 			Logger:    logger,
 			Mechanism: gubernator.WatchPods,
 			Namespace: namespace,
@@ -62,6 +65,17 @@ func NewKubernetesPeers(namespace, selector, podIP, podPort string, logger *logr
 		},
 
 		init: sync.Once{},
+	}
+
+	var transformInfos func([]gubernator.PeerInfo) []string
+	if peerType == PeerTypeGRPC {
+		transformInfos = kp.infosToGRPCAddresses
+	} else {
+		transformInfos = kp.infosToHttpAddresses
+	}
+
+	kp.poolConfig.OnUpdate = func(infos []gubernator.PeerInfo) {
+		kp.set(transformInfos(infos))
 	}
 
 	return kp
@@ -92,12 +106,8 @@ func (kp *KubernetesPeers) Maintain(ctx context.Context, setter func(...string))
 	return ctx.Err()
 }
 
-func (kp *KubernetesPeers) set(infos []gubernator.PeerInfo) {
-	if kp == nil || kp.setter == nil {
-		return
-	}
-
-	var peers []string
+func (kp *KubernetesPeers) infosToHttpAddresses(infos []gubernator.PeerInfo) []string {
+	addrs := make([]string, 0, len(infos))
 	for _, info := range infos {
 		var addr string
 		if info.HTTPAddress != "" {
@@ -125,8 +135,24 @@ func (kp *KubernetesPeers) set(infos []gubernator.PeerInfo) {
 
 		peer := u.String()
 		kp.logger.WithFields(logrus.Fields{"info": info, "peer": peer}).Debug("found peer")
+		addrs = append(addrs, addr)
+	}
 
-		peers = append(peers, peer)
+	return addrs
+}
+
+func (kp *KubernetesPeers) infosToGRPCAddresses(infos []gubernator.PeerInfo) []string {
+	addrs := make([]string, 0, len(infos))
+	for _, info := range infos {
+		addrs = append(addrs, info.GRPCAddress)
+	}
+
+	return addrs
+}
+
+func (kp *KubernetesPeers) set(peers []string) {
+	if kp == nil || kp.setter == nil {
+		return
 	}
 
 	kp.logger.WithFields(logrus.Fields{"peers": peers, "count": len(peers)}).Debug("found peers")

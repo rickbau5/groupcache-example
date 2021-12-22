@@ -39,6 +39,9 @@ spec:
           imagePullPolicy: Never
           ports:
             - containerPort: 3000
+              name: "api"
+            - containerPort: 3001
+              name: "grpc"
           env:
             - name: PEERS_TYPE
               value: "pods"
@@ -51,12 +54,16 @@ spec:
                 fieldRef:
                   fieldPath: status.podIP
             - name: GUBERNATOR_POD_PORT
-              value: "3000"
+              value: "3001"
             - name: GUBERNATOR_SELECTOR
               value: "app=groupcache"
             - name: LOG_LEVEL
-              value: "info"
+              value: "debug"
             - name: LOG_REQUESTS
-              value: "false"
+              value: "true"
             - name: PPROF_ENABLED
-              value: "false"
+              value: "true"
+            - name: PEERS_PROTOCOL
+              value: "grpc"
+            - name: LISTEN_ADDR_GRPC
+              value: ":3001"

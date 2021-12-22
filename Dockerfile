@@ -7,6 +7,8 @@ COPY go.sum ./
 RUN go mod download
 
 COPY *.go ./
+COPY proto/*.go proto/
+COPY internal internal/
 
 RUN go build -o /build/groupcache-example
 

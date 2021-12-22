@@ -8,8 +8,12 @@ services:
       - "3001:3000"
     environment:
       PEERS_TYPE: "set"
-      PEERS_SELF: "http://server-01:3000"
-      PEERS_SET: "http://server-01:3000,http://server-02:3000,http://server-03:3000"
+      LOG_LEVEL: "debug"
+      PEERS_PROTOCOL: "grpc"
+      PEERS_SELF: "server-01:3001"
+      PEERS_SET: "server-01:3001,server-02:3001,server-03:3001"
+      LISTEN_ADDR_GRPC: ":3001"
+
 
   server-02:
     build: .
@@ -18,8 +22,11 @@ services:
       - "3002:3000"
     environment:
       PEERS_TYPE: "set"
-      PEERS_SELF: "http://server-02:3000"
-      PEERS_SET: "http://server-01:3000,http://server-02:3000,http://server-03:3000"
+      LOG_LEVEL: "debug"
+      PEERS_PROTOCOL: "grpc"
+      PEERS_SELF: "server-02:3001"
+      PEERS_SET: "server-01:3001,server-02:3001,server-03:3001"
+      LISTEN_ADDR_GRPC: ":3001"
 
   server-03:
     build: .
@@ -28,8 +35,11 @@ services:
       - "3003:3000"
     environment:
       PEERS_TYPE: "set"
-      PEERS_SELF: "http://server-03:3000"
-      PEERS_SET: "http://server-01:3000,http://server-02:3000,http://server-03:3000"
+      LOG_LEVEL: "debug"
+      PEERS_PROTOCOL: "grpc"
+      PEERS_SELF: "server-03:3001"
+      PEERS_SET: "server-01:3001,server-02:3001,server-03:3001"
+      LISTEN_ADDR_GRPC: ":3001"
 
   nginx:
     image: nginx:1.19.2

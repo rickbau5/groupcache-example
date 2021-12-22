@@ -3,3 +3,6 @@
 .idea
 vendor
 bin
+
+# in case this gets left behind
+proto/github.com
